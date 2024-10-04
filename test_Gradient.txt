@@ -1,0 +1,249 @@
+#include "windmill.hpp"
+using namespace std;
+using namespace cv;
+
+const double pi = 3.14159265358979323846;
+void drawRotatedRect(cv::Mat& img, cv::RotatedRect& rotatedRect, const cv::Scalar& color, int thickness = 2)
+{
+    // 获取矩形的四个角点
+    cv::Point2f rectPoints[4];
+    rotatedRect.points(rectPoints);
+    
+    // 绘制矩形的四条边
+    for (int j = 0; j < 4; j++)
+    {
+        cv::line(img, rectPoints[j], rectPoints[(j + 1) % 4], color, thickness);
+    }
+}
+
+// 数据结构，用于存储 t 和 angle 的一组数据点
+struct DataPoint {
+    double t;
+    double angle;
+};
+
+// 计算模型预测的角度值
+double model(double t, double b, double A, double w, double phi, double c) {
+    return b * t + (A / w) * sin(w * t + phi) + c;
+}
+
+// 计算均方误差损失
+double compute_cost(const vector<DataPoint>& data, double b, double A, double w, double phi, double c) {
+    double total_error = 0.0;
+    for (const auto& point : data) {
+        double prediction = model(point.t, b, A, w, phi, c);
+        double error = prediction - point.angle;
+        total_error += error * error;
+    }
+    return total_error / (2.0 * data.size());  // 平均误差
+}
+
+// 进行梯度下降
+void gradient_descent(vector<DataPoint>& data, double& b, double& A, double& w, double& phi, double& c, double alpha, int iterations) {
+    int m = data.size();  // 样本数
+    for (int iter = 0; iter < iterations; ++iter) {
+        double db = 0, dA = 0, dw = 0, dphi = 0, dc = 0;  // 每个参数的梯度
+
+        // 计算每个参数的梯度
+        for (const auto& point : data) {
+            double t = point.t;
+            double y = point.angle;
+            double prediction = model(t, b, A, w, phi, c);
+            double error = prediction - y;
+
+            // 对每个参数求导数
+            db += error * t;
+            dA += error * (sin(w * t + phi) / w);
+            dw += error * (A * t * cos(w * t + phi) / w - A * sin(w * t + phi) / (w * w));
+            dphi += error * (A / w * cos(w * t + phi));
+            dc += error;
+        }
+
+        // 进行梯度更新
+        b -= alpha * db / m;
+        A -= alpha * dA / m;
+        w -= alpha * dw / m;
+        phi -= alpha * dphi / m;
+        c -= alpha * dc / m;
+
+        // 每隔一段时间打印一次损失值
+        if (iter % 1000 == 0) {
+            double cost = compute_cost(data, b, A, w, phi, c);
+            printf("Iteration %d, cost: %.6lf\n", iter, cost);
+        }
+    }
+}
+
+
+int main()
+{
+    std::chrono::milliseconds t = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+    WINDMILL::WindMill wm(t.count());
+    cv::Mat src;
+
+    double start_time=t.count();
+    cout<<"start time : "<<t.count()<<endl;
+
+    // 存储扇叶的参数
+    vector<double> angles;
+    vector<Point2f> centers;
+    vector<double> times;//记录单次循环所需的时间
+    vector<double> Times;//每一帧的时间点
+
+    while (1)
+    {
+        t = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch());
+        src = wm.getMat((double)t.count()/1000);
+        Times.push_back((double)t.count()/1000);
+        
+        //==========================代码区========================//
+
+        // 记录开始时间
+        auto start_time = std::chrono::high_resolution_clock::now();
+
+
+        // 1. 将图像转换为 HSV 颜色空间，以便提取红色区域
+        cv::Mat hsvImg;
+        cv::cvtColor(src, hsvImg, cv::COLOR_BGR2HSV);
+        
+        // 2. 定义红色的 HSV 范围
+        cv::Mat mask1, mask2;
+        cv::inRange(hsvImg, cv::Scalar(0, 100, 100), cv::Scalar(10, 255, 255), mask1);  // 红色范围1
+        cv::inRange(hsvImg, cv::Scalar(160, 100, 100), cv::Scalar(180, 255, 255), mask2); // 红色范围2
+        
+        // 3. 合并两个红色区域的掩码
+        cv::Mat redMask = mask1 | mask2;
+        
+        // 4. 使用形态学操作去除噪声
+        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+        cv::morphologyEx(redMask, redMask, cv::MORPH_OPEN, kernel);
+        
+        // 5. 查找红色区域的轮廓
+        vector<vector<Point>> contours;
+        vector<Vec4i> hierarchy;
+        cv::findContours(redMask, contours, hierarchy, cv::RETR_LIST, cv::CHAIN_APPROX_SIMPLE);
+        
+        // 6. 绘制检测到的轮廓
+        cv::Rect R_boundingBox;    //cv::Rect(int x, int y, int width, int height);
+        cv::Rect fan_boundingBox;  //矩形类型定义，用于表示二维图像中的矩形区域
+
+        double old_angle = 0;
+        for (size_t i = 0; i < contours.size(); i++)
+        {
+            // 基于面积对检测到的轮廓进行过滤
+            double area = cv::contourArea(contours[i]);
+            //cout<<"area "<<i<<" :"<<area<<endl;       //用于确定标靶area的面积大概为多少
+            if (area > 4000 && area < 4500)  //标靶整体，带柄
+            {
+                cv::drawContours(src, contours, (int)i, cv::Scalar(255, 255, 255), 2);  // 用白色绘制轮廓
+            }
+            if (area > 1500 && area < 1900)  //扇叶（矩形）
+            {
+                cv::drawContours(src, contours, (int)i, cv::Scalar(255, 255, 255), 2);  // 用白色绘制轮廓
+                cv::Rect boundingBox = cv::boundingRect(contours[i]);
+                fan_boundingBox = boundingBox;
+                // rectangle(src, boundingBox, Scalar(0, 255, 0), 2);
+            }
+
+
+            if (area > 50 && area < 1000)  //  识别   R   字符
+            {
+                cv::Rect boundingBox = cv::boundingRect(contours[i]);
+                R_boundingBox = boundingBox;
+            }
+        }
+
+        if (R_boundingBox.area() > 0 && fan_boundingBox.area() > 0)
+        {
+            // 计算两者的中心点  通过矩形的左上角和右下角的坐标，计算出该矩形的中心点
+            cv::Point2i R_center = (R_boundingBox.tl() + R_boundingBox.br()) / 2;
+            cv::Point2i fan_center = (fan_boundingBox.tl() + fan_boundingBox.br()) / 2;
+
+            double angle = atan2(R_center.y - fan_center.y, R_center.x - fan_center.x);
+            // double angleDegrees = angle/pi*180;   //看看angle对不对
+            // cout<<"angle : "<<angleDegrees<<endl; 
+            angles.push_back(angle);
+            
+            
+            // 计算 R 和风车扇叶之间的中点
+            cv::Point2i midPoint = (R_center + fan_center) / 2;
+
+            // 8. 在中点处绘制一个圆形
+            cv::circle(src, midPoint, 20, cv::Scalar(0, 255, 0), 3);  // 绿色圆形
+        }
+
+
+
+        
+
+
+        imshow("windmill", src);
+
+        // 记录结束时间
+        auto end_time = std::chrono::high_resolution_clock::now();
+        
+        // 计算耗时
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();
+
+        // 打印时间 (单位: 毫秒)
+        times.push_back(duration);
+        // cout << "单次循环识别耗时: " << duration << " µs" << endl;
+
+
+        //=======================================================//
+        
+        
+        if (waitKey(1) == 27)  // 按下 'Esc' 键退出
+        {
+            break;
+        }
+    }
+
+    //计算单次循环平均消耗时间
+    if(!times.empty())
+    {
+        double averagetime = 0.0;
+        for (size_t i = 0; i < times.size(); i++)
+        {
+            averagetime += times[i];
+        }
+        averagetime /= (times.size() - 1);
+        cout << "平均消耗时间: " << averagetime << " µs"<<endl;
+    }
+
+
+    //梯度下降实现拟合
+    vector<DataPoint> data;
+    if(!Times.empty()&&!angles.empty()&&Times.size()==angles.size())
+    {
+        for(int i=0;i<angles.size();i++)
+        {
+            data.push_back({Times[i], angles[i]});
+        }
+        
+    }
+    double b = 0;
+    double A = 2;
+    double w = 0.5;
+    double phi = 0.5;
+    double c = 0;
+
+    // 梯度下降超参数
+    double alpha = 0.000001;  // 学习率
+    int iterations = 50000;  // 迭代次数
+
+    // 执行梯度下降
+    gradient_descent(data, b, A, w, phi, c, alpha, iterations);
+
+    // 打印最终结果
+    printf("Final parameters:\n");
+    printf("b = %.6lf, A = %.6lf, w = %.6lf, phi = %.6lf, c = %.6lf\n", b, A, w, phi, c);
+
+
+
+
+    
+
+
+    return 0;
+}
