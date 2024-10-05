@@ -48,7 +48,7 @@ void fitAngleSpeed(const std::vector<double>& times, const std::vector<double>& 
     // options.function_tolerance = 1e-6;  // 更严格的收敛标准
     // options.max_num_iterations = 2000;
     // options.function_tolerance = 1e-9;
-    options.gradient_tolerance = 1e-10;
+    // options.gradient_tolerance = 1e-10;
 
 
     // 求解
@@ -68,7 +68,7 @@ void fitAngleSpeed(const std::vector<double>& times, const std::vector<double>& 
 int main()
 {
     double avg_time=0;
-    for(int num=0;num<10;num++)
+    for(int num=0;num<50;num++)
     {
         // 开始计时
         auto start = std::chrono::high_resolution_clock::now();
@@ -272,7 +272,7 @@ int main()
 
 
     
-    avg_time/=10;
+    avg_time/=50;
     std::cout << "程序平均运行时间: " << avg_time << " 毫秒\n";
     
    
