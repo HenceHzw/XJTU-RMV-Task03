@@ -35,7 +35,7 @@ void fitAngleSpeed(const std::vector<double>& times, const std::vector<double>& 
         problem.AddResidualBlock(
             new ceres::AutoDiffCostFunction<AngleSpeedResidual, 1,1,1,1,1,1>(
                 new AngleSpeedResidual(times[i], speeds[i])),
-             new ceres::CauchyLoss(0.5), &A ,&omega, &phi, &b, &c);
+             nullptr, &A ,&omega, &phi, &b, &c);
     }
     // new ceres::CauchyLoss(0.5) 
 
@@ -67,8 +67,8 @@ void fitAngleSpeed(const std::vector<double>& times, const std::vector<double>& 
 
 int main()
 {
-    double avg_time=0;
-    for(int num=0;num<50;num++)
+    double avg_time=0;int fail_num=0;
+    for(int num=0;num<10;num++)
     {
         // 开始计时
         auto start = std::chrono::high_resolution_clock::now();
@@ -169,14 +169,14 @@ int main()
 
             double angle = -atan2(center_fan.y - center_R.y, center_fan.x - center_R.x);
             
-            if(count>=4)                //平滑处理
-            {
-                for(int i=0;i<3;i++)
-                {
-                    angle+=angles[count-i-2];
-                }
-                angle/=4;
-            }
+            // if(count>=4)                //平滑处理
+            // {
+            //     for(int i=0;i<3;i++)
+            //     {
+            //         angle+=angles[count-i-2];
+            //     }
+            //     angle/=4;
+            // }
             
             angles.push_back(angle);
             Angle_Times.push_back(time);
@@ -200,7 +200,7 @@ int main()
             // old_time = time;
 
 
-            if(count%300==0)                 //每隔300帧拟合一次
+            if(count%250==0)                 //每隔250帧拟合一次
             {
                 fitAngleSpeed(Angle_Times, angles, A, omega ,phi, b, c);
                 
@@ -225,9 +225,10 @@ int main()
                 break;
             }
 
-            if(count==3000)
+            if(count==2000)
             {
-                cout<<"第 "<<num+1<<" 次收敛超时*********收敛失败!  重新拟合"<<endl;
+                cout<<"第 "<<num+1<<" 次收敛超时******************收敛失败!  重新拟合"<<endl;
+                fail_num+=1;
                 flag=1;
                 num-=1;
                 break;
@@ -272,9 +273,10 @@ int main()
 
 
     
-    avg_time/=50;
+    avg_time/=10;
     std::cout << "程序平均运行时间: " << avg_time << " 毫秒\n";
+    // cout<<"100次拟合中，共有 "<<fail_num<<" 次拟合失败";
     
    
     return 0;
-}
+} 
